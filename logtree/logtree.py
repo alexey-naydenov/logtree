@@ -5,6 +5,8 @@ from __future__ import print_function
 import re
 import argparse
 import sys
+import curses
+import curses.panel
 
 __VERSION__ = '0.1'
 
@@ -65,8 +67,8 @@ class LogTreeNode:
         child_path = path[len(self.value):].strip()
         if not child_path:
             return self
-        for c in self.children:
-            subtree = c.get_subtree(child_path)
+        for child in self.children:
+            subtree = child.get_subtree(child_path)
             if subtree:
                 return subtree
         return None
@@ -128,23 +130,39 @@ def build_tree(loglines):
     return LogTreeNode([(get_keywords(l), l) for l in loglines])
 
 
-def show_tree(args, tree_object):
+def show_tree(tree_object):
     """Display log information."""
-    assert args
     print(tree_object)
 
 
-def show_log(args, tree_object):
+def show_log(tree_object):
     """Display log information."""
-    assert args
     print('\n'.join(tree_object.log))
 
 
-def run_curses(args, tree_object):
+def make_windows(parent):
+    """Return tuple of tree and log windows."""
+    ysize, xsize = parent.getmaxyx()
+    tree_width = int(xsize*0.3)
+    tree_window = curses.newwin(ysize, tree_width, 0, 0)
+    log_window = curses.newwin(ysize, xsize - tree_width, 0, tree_width)
+    tree_window.border()
+    log_window.border()
+    return tree_window, log_window
+
+
+def display_tree(stdscr, tree_object):
     """Use curses to view log file."""
-    assert args
-    assert tree_object
-    print('curses mode')
+    tree_window, log_window = make_windows(stdscr)
+    tree_window.refresh()
+    log_window.refresh()
+    import time
+    time.sleep(5)
+
+
+def run_curses(tree_object):
+    """Run curses wrapper that inits and destroy screen."""
+    curses.wrapper(display_tree, tree_object)
 
 
 COMMAND_HANDLERS = {'tree': show_tree,
@@ -167,11 +185,16 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+def main():
+    """Execute specified command."""
     arguments = parse_args()
     tree = build_tree(l.strip('\n\r') for l in arguments.input.readlines())
     if arguments.path:
         tree = tree.get_subtree(arguments.path)
         if not tree:
             sys.exit('error: the specified path was not found')
-    COMMAND_HANDLERS[arguments.command](arguments, tree)
+    COMMAND_HANDLERS[arguments.command](tree)
+
+
+if __name__ == '__main__':
+    main()
