@@ -57,6 +57,9 @@ class LogTreeNode:
 
     def get_subtree(self, path):
         """Return tree object with given path."""
+        if self.value.startswith(path):
+            # enables abbreviation of long node names
+            return self
         if not path.startswith(self.value):
             return None
         child_path = path[len(self.value):].strip()
