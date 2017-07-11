@@ -3,7 +3,8 @@
 from __future__ import print_function
 
 import re
-
+import argparse
+import sys
 
 __VERSION__ = '0.1'
 
@@ -11,6 +12,7 @@ INDENT = '    '
 
 MAX_LAYERS_COUNT = 10
 MAX_CHILDREN_COUNT = 50
+MAX_VALUE_LENGTH = 80
 
 KEYWORD_SEPARATOR_RE = re.compile(r'\s')
 CRUFT_RES = [re.compile(r'\d{1,2}-\w{3}-\d{2,4}'),
@@ -26,35 +28,17 @@ class LogTreeNode:
         self._value = value if value else ''
         self._lines = [l for _, l in lines_data]
         self._children = []
+        if len(self._value) > MAX_VALUE_LENGTH:
+            self._value = self._value[:MAX_VALUE_LENGTH]
+            return
         if depth < MAX_LAYERS_COUNT:
             self._build_children(key_depth, lines_data)
 
     def __str__(self):
-        indent = self._depth * INDENT
-        children_str = '\n'.join(str(c) for c in self._children)
-        return indent + self._value + '\n' + children_str
-
-    def _build_children(self, key_depth, lines_data):
-        """Create children if therea are not too many or too few."""
-
-        keywords = set(k[key_depth] for k, _ in lines_data if len(k) > key_depth)
-        if len(keywords) >= MAX_CHILDREN_COUNT:
-            return
-        # don't create child objects that hold identical log lines
-        if len(keywords) == 1 and all(len(k) > key_depth for k, _ in lines_data):
-            if self._value:
-                self._value += ' ' + ''.join(keywords)
-            else:
-                self._value = ''.join(keywords)
-            self._build_children(key_depth + 1, lines_data)
-            return
-        for keyword in keywords:
-            child_lines = [(k, l) for (k, l) in lines_data
-                           if len(k) > key_depth and k[key_depth] == keyword]
-            if not child_lines:
-                continue
-            self._children.append(LogTreeNode(child_lines, keyword,
-                                              self._depth + 1, key_depth + 1))
+        value = self._depth * INDENT + self._value
+        if self._children:
+            value += '\n' + '\n'.join(str(c) for c in self._children)
+        return value
 
     @property
     def value(self):
@@ -71,6 +55,44 @@ class LogTreeNode:
         """Get log lines associated with the node"""
         return self._lines
 
+    def get_subtree(self, path):
+        """Return tree object with given path."""
+        if not path.startswith(self.value):
+            return None
+        child_path = path[len(self.value):].strip()
+        if not child_path:
+            return self
+        for c in self.children:
+            subtree = c.get_subtree(child_path)
+            if subtree:
+                return subtree
+        return None
+
+    def _build_children(self, key_depth, lines_data):
+        """Create children if therea are not too many or too few."""
+
+        keywords = set(k[key_depth] for k, _ in lines_data if len(k) > key_depth)
+        if len(keywords) >= MAX_CHILDREN_COUNT:
+            return
+        # don't create child objects that hold identical log lines
+        if len(keywords) == 1 and all(len(k) > key_depth for k, _ in lines_data):
+            if self._value:
+                self._value += ' ' + ''.join(keywords)
+            else:
+                self._value = ''.join(keywords)
+            if len(self._value) > MAX_VALUE_LENGTH:
+                self._value = self._value[:MAX_VALUE_LENGTH]
+            else:
+                self._build_children(key_depth + 1, lines_data)
+            return
+        for keyword in keywords:
+            child_lines = [(k, l) for (k, l) in lines_data
+                           if len(k) > key_depth and k[key_depth] == keyword]
+            if not child_lines:
+                continue
+            self._children.append(LogTreeNode(child_lines, keyword,
+                                              self._depth + 1, key_depth + 1))
+
 
 def is_cruft(string):
     """Check if a string should not be used to create a tree node.
@@ -84,7 +106,7 @@ def is_cruft(string):
 
 def strip_specials(string):
     """Remove spaces and brackets"""
-    return string.strip(' \t()[]{}:')
+    return string.strip(' \t()[]{}:;.,')
 
 
 def get_keywords(logline):
@@ -103,15 +125,50 @@ def build_tree(loglines):
     return LogTreeNode([(get_keywords(l), l) for l in loglines])
 
 
-def run_cmd():
-    """Display log information"""
-    pass
+def show_tree(args, tree_object):
+    """Display log information."""
+    assert args
+    print(tree_object)
 
 
-def run_curses():
-    """Use curses to view log file"""
-    pass
+def show_log(args, tree_object):
+    """Display log information."""
+    assert args
+    print('\n'.join(tree_object.log))
+
+
+def run_curses(args, tree_object):
+    """Use curses to view log file."""
+    assert args
+    assert tree_object
+    print('curses mode')
+
+
+COMMAND_HANDLERS = {'tree': show_tree,
+                    'log': show_log,
+                    'curses': run_curses}
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Access plain log as if it is stored in a tree.')
+    parser.add_argument('-c', '--command', choices=COMMAND_HANDLERS.keys(),
+                        default='curses',
+                        help='command to execute [default: curses]')
+    parser.add_argument('-i', '--input', type=argparse.FileType('r'),
+                        required=True, help='input file')
+    parser.add_argument('-p', '--path', type=str,
+                        help='display starting with path')
+
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
-    run_cmd()
+    arguments = parse_args()
+    tree = build_tree(l.strip('\n\r') for l in arguments.input.readlines())
+    if arguments.path:
+        tree = tree.get_subtree(arguments.path)
+        if not tree:
+            sys.exit('error: the specified path was not found')
+    COMMAND_HANDLERS[arguments.command](arguments, tree)
