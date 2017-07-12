@@ -148,10 +148,12 @@ class TextView(object):
         self._model = model
         self._lines = []
         self._has_focus = False
+        # cursor move vertically as usual
         # 0 <= _cursor_row < _pad_height
-        # 0 <= _cursor_col < _pad_width
         # _current_row <= _cursor_row < _current_row + _view_height
-        # _current_col <= _cursor_col < _current_col + _view_width
+        # cursor stays at the left edge of the screen
+        # 0 <= _cursor_col <= _pad_width -_view_width
+        # _current_col == _cursor_col
         self._cursor_row = None
         self._cursor_col = None
         self._current_row = None
@@ -168,8 +170,14 @@ class TextView(object):
         self._window.refresh()
         self._pad_region = (y + 1, x + 1, y + height - 2, x + width - 2)
         # input handlers
-        self._key_functions = {curses.KEY_UP: self._on_key_up,
-                               curses.KEY_DOWN: self._on_key_down}
+        self._key_functions = {
+            curses.KEY_UP: self._on_key_up,
+            curses.KEY_DOWN: self._on_key_down,
+            curses.KEY_PPAGE: self._on_key_pgup,
+            curses.KEY_NPAGE: self._on_key_pgdown,
+            curses.KEY_LEFT: self._on_key_left,
+            curses.KEY_RIGHT: self._on_key_right,
+        }
         self.refresh()
 
     def getch(self):
@@ -197,6 +205,7 @@ class TextView(object):
         self._pad_width = 0
         if self._lines:
             self._pad_width = max(len(l) for l in self._lines)
+            self._pad_width += 1
         self._pad_width = max(self._view_width, self._pad_width)
         self._pad = curses.newpad(self._pad_height, self._pad_width)
         self._pad.keypad(1)
@@ -220,12 +229,40 @@ class TextView(object):
         self.refresh()
 
     def _on_key_up(self):
-        self._cursor_row = max(0, self._cursor_row - 1)
-        self._current_row = min(self._current_row, self._cursor_row)
+        self._move_cursor_up(1)
 
     def _on_key_down(self):
-        self._cursor_row = min(self._pad_height - 1, self._cursor_row + 1)
-        # ensure invariant: current_row + view_height > cursor_row
+        self._move_cursor_down(1)
+
+    def _on_key_pgup(self):
+        self._move_cursor_up(self._view_height - 1)
+
+    def _on_key_pgdown(self):
+        self._move_cursor_down(self._view_height - 1)
+
+    def _on_key_left(self):
+        self._cursor_col -= 1
+        self._cursor_col = max(self._cursor_col, 0)
+        self._current_col = self._cursor_col
+
+    def _on_key_right(self):
+        self._cursor_col += 1
+        self._cursor_col = min(self._cursor_col,
+                               self._pad_width - self._view_width)
+        self._current_col = self._cursor_col
+
+    def _move_cursor_up(self, value):
+        assert value >= 0
+        self._cursor_row -= value
+        self._cursor_row = max(self._cursor_row, 0)
+        # ensure: current_row <= cursor_row
+        self._current_row = min(self._current_row, self._cursor_row)
+
+    def _move_cursor_down(self, value):
+        assert value >= 0
+        self._cursor_row += value
+        self._cursor_row = min(self._cursor_row, self._pad_height - 1)
+        # ensure: current_row + view_height > cursor_row
         self._current_row = max(self._current_row,
                                 self._cursor_row - self._view_height + 1)
 
@@ -332,7 +369,19 @@ def parse_args():
 def main():
     """Execute specified command."""
     arguments = parse_args()
-    tree = build_tree(l.strip('\n\r') for l in arguments.input.readlines())
+    if arguments.command == 'curses':
+        # Need to expand tabs because curses pad can not handle
+        # strings with multiple tabs. Pad has fixed width and it is
+        # expensive to calculate line widths taking tabs into
+        # account. If a line is too long it wraps thus end is lost. If
+        # the last line is too long then pad throws an exception.
+        tree = build_tree(l.strip('\n\r').expandtabs()
+                          for l in arguments.input.readlines())
+    else:
+        # Don't expand tabs to preserve original formating in case
+        # this program is used as a filter.
+        tree = build_tree(l.strip('\n\r')
+                          for l in arguments.input.readlines())
     if arguments.path:
         tree = tree.get_subtree(arguments.path)
         if not tree:
