@@ -36,12 +36,18 @@ class LogTreeNode(object):
             return
         if depth < MAX_LAYERS_COUNT:
             self._build_children(key_depth, lines_data)
+            self._children.sort(key=lambda c : c.value)
 
     def __str__(self):
         value = self._depth * INDENT + self._value
         if self._children:
             value += '\n' + '\n'.join(str(c) for c in self._children)
         return value
+
+    @property
+    def depth(self):
+        """Node depth in the hierarchy."""
+        return self._depth
 
     @property
     def value(self):
@@ -110,8 +116,9 @@ class LogModel(object):
         self._log_tree = None
         self.tree_view = None
         self.log_view = None
+        self._displayed_objects = None
 
-    def update_views(self):
+    def _update_views(self):
         if self.tree_view:
             self.tree_view.data_changed()
         if self.log_view:
@@ -124,20 +131,28 @@ class LogModel(object):
     @data.setter
     def data(self, value):
         self._log_tree = value
-        self.update_views()
+        self._init_tree_view_data()
+        self._update_views()
 
     def get_view_data(self, view):
         if view == self.tree_view:
-            return self.get_tree_view_data()
+            return self._get_tree_view_data()
         elif view == self.log_view:
-            return self.get_log_view_data()
+            return self._get_log_view_data()
         else:
             assert False, 'Unknown view'
 
-    def get_tree_view_data(self):
-        return []
+    def _init_tree_view_data(self):
+        self._displayed_objects = []
+        for c in self._log_tree.children:
+            self._displayed_objects.append(c)
 
-    def get_log_view_data(self):
+    def _get_tree_view_data(self):
+        lines = ['|+' + o.value for o in self._displayed_objects[:-1]]
+        lines.append('\-' + self._displayed_objects[-1].value)
+        return lines
+
+    def _get_log_view_data(self):
         return self.data.log
 
 
@@ -314,7 +329,7 @@ def create_gui_objects(parent, tree_object):
     ysize, xsize = parent.getmaxyx()
     tree_width = int(xsize * 0.3)
     tree_view = TextView(model, 0, 0, ysize, tree_width)
-    # model.tree_view = tree_view
+    model.tree_view = tree_view
     log_view = TextView(model, 0, tree_width, ysize, xsize - tree_width)
     model.log_view = log_view
     model.data = tree_object
