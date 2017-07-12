@@ -23,7 +23,7 @@ CRUFT_RES = [re.compile(r'\d{1,2}-\w{3}-\d{2,4}'),
              re.compile(r'\d{2}:\d{2}:\d{2}')]
 
 
-class LogTreeNode:
+class LogTreeNode(object):
     """Store log lines in a tree structure."""
 
     def __init__(self, lines_data, value=None, depth=0, key_depth=0):
@@ -100,35 +100,96 @@ class LogTreeNode:
                                               self._depth + 1, key_depth + 1))
 
 
-class TextView:
+class LogModel(object):
+    """Holds log data and update log views.
+
+    Model and controller.
+    """
+
+    def __init__(self):
+        self._log_tree = None
+        self.tree_view = None
+        self.log_view = None
+
+    def update_views(self):
+        if self.tree_view:
+            self.tree_view.data_changed()
+        if self.log_view:
+            self.log_view.data_changed()
+
+    @property
+    def data(self):
+        return self._log_tree
+
+    @data.setter
+    def data(self, value):
+        self._log_tree = value
+        self.update_views()
+
+    def get_view_data(self, view):
+        if view == self.tree_view:
+            return self.get_tree_view_data()
+        elif view == self.log_view:
+            return self.get_log_view_data()
+        else:
+            assert False, 'Unknown view'
+
+    def get_tree_view_data(self):
+        return []
+
+    def get_log_view_data(self):
+        return self.data.log
+
+
+class TextView(object):
     """Display large text with scrolling."""
 
     def __init__(self, model, y, x, height, width):
         self._model = model
-        self._height = height
-        self._width = width
-        self._window = curses.newwin(self._height, self._width, y, x)
+        self._lines = []
+        self._has_focus = False
+        self._cursor_position = (0, 0)
+        self._pad_position = (0, 0)
+        self._pad_region = (y + 1, x + 1, y + height - 2, x + width - 2)
+        self._pad_width = 1
+        self._pad = curses.newpad(1, 1) # 1 by 1 to display cursor
+        # window just to draw border, no need to ever refresh it
+        self._window = curses.newwin(height, width, y, x)
         self._window.border()
         self._window.refresh()
+        self.refresh()
 
     def getch(self):
         """Getch refreshes the window so it cannot be called with stdscr.
 
         The work around is to call getch() for an active window.
         """
-        return self._window.getch()
+        return self._pad.getch()
 
     def set_focus(self):
-        #self._window.addstr(0, 0, 'has focus')
-        self._window.move(1, 1)
+        self._has_focus = True
         self.refresh()
 
     def loose_focus(self):
-        #self._window.addstr(0, 0, 'no focus')
+        self._has_focus = False
+        self.refresh()
+
+    def data_changed(self):
+        self._lines = self._model.get_view_data(self)
+        self._pad_width = 0
+        if self._lines:
+            self._pad_width = max(len(l) for l in self._lines)
+        self._pad_width = max(1, self._pad_width)
         self.refresh()
 
     def refresh(self):
-        self._window.refresh()
+        if self._lines:
+            self._pad = curses.newpad(len(self._lines), self._pad_width)
+            for i, l in enumerate(self._lines):
+                self._pad.addnstr(i, 0, l, self._pad_width)
+        if self._has_focus:
+            self._pad.move(*self._cursor_position)
+        self._pad.refresh(*self._pad_position, *self._pad_region)
 
     def process_key(self, key):
         pass
@@ -175,18 +236,23 @@ def show_log(tree_object):
     print('\n'.join(tree_object.log))
 
 
-def create_windows(parent, data):
+def create_gui_objects(parent, tree_object):
     """Return tuple of tree and log windows."""
+    model = LogModel()
     ysize, xsize = parent.getmaxyx()
     tree_width = int(xsize * 0.3)
-    tree_window = TextView(data, 0, 0, ysize, tree_width)
-    log_window = TextView(data, 0, tree_width, ysize, xsize - tree_width)
-    return [tree_window, log_window]
+    tree_view = TextView(model, 0, 0, ysize, tree_width)
+    # model.tree_view = tree_view
+    log_view = TextView(model, 0, tree_width, ysize, xsize - tree_width)
+    model.log_view = log_view
+    model.data = tree_object
+    return model, [tree_view, log_view]
 
 
 def display_tree(stdscr, tree_object):
     """Use curses to view log file."""
-    windows = itertools.cycle(create_windows(stdscr, tree_object))
+    model, text_views = create_gui_objects(stdscr, tree_object)
+    windows = itertools.cycle(text_views)
     active_window = next(windows)
     active_window.set_focus()
     while True:
