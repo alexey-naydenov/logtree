@@ -148,12 +148,18 @@ class TextView(object):
         self._model = model
         self._lines = []
         self._has_focus = False
+        # 0 <= _cursor_row < _pad_height
+        # 0 <= _cursor_col < _pad_width
+        # _current_row <= _cursor_row < _current_row + _view_height
+        # _current_col <= _cursor_col < _current_col + _view_width
         self._cursor_row = None
         self._cursor_col = None
         self._current_row = None
         self._current_col = None
         self._pad_width = None
         self._pad_height = None
+        self._view_height = height - 2
+        self._view_width = width - 2
         self._pad = None
         self._update_pad()
         # window just to draw border, no need to ever refresh it
@@ -161,6 +167,9 @@ class TextView(object):
         self._window.border()
         self._window.refresh()
         self._pad_region = (y + 1, x + 1, y + height - 2, x + width - 2)
+        # input handlers
+        self._key_functions = {curses.KEY_UP: self._on_key_up,
+                               curses.KEY_DOWN: self._on_key_down}
         self.refresh()
 
     def getch(self):
@@ -184,12 +193,13 @@ class TextView(object):
         self.refresh()
 
     def _update_pad(self):
-        self._pad_height = max(1, len(self._lines))
+        self._pad_height = max(self._view_height, len(self._lines))
         self._pad_width = 0
         if self._lines:
             self._pad_width = max(len(l) for l in self._lines)
-        self._pad_width = max(1, self._pad_width)
+        self._pad_width = max(self._view_width, self._pad_width)
         self._pad = curses.newpad(self._pad_height, self._pad_width)
+        self._pad.keypad(1)
         for i, l in enumerate(self._lines):
             self._pad.addnstr(i, 0, l, self._pad_width)
         self._cursor_row = 0
@@ -204,7 +214,20 @@ class TextView(object):
                           *self._pad_region)
 
     def process_key(self, key):
-        pass
+        if key not in self._key_functions.keys():
+            return
+        self._key_functions[key]()
+        self.refresh()
+
+    def _on_key_up(self):
+        self._cursor_row = max(0, self._cursor_row - 1)
+        self._current_row = min(self._current_row, self._cursor_row)
+
+    def _on_key_down(self):
+        self._cursor_row = min(self._pad_height - 1, self._cursor_row + 1)
+        # ensure invariant: current_row + view_height > cursor_row
+        self._current_row = max(self._current_row,
+                                self._cursor_row - self._view_height + 1)
 
 
 def is_cruft(string):
