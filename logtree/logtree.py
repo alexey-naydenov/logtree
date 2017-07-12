@@ -148,15 +148,19 @@ class TextView(object):
         self._model = model
         self._lines = []
         self._has_focus = False
-        self._cursor_position = (0, 0)
-        self._pad_position = (0, 0)
-        self._pad_region = (y + 1, x + 1, y + height - 2, x + width - 2)
-        self._pad_width = 1
-        self._pad = curses.newpad(1, 1) # 1 by 1 to display cursor
+        self._cursor_row = None
+        self._cursor_col = None
+        self._current_row = None
+        self._current_col = None
+        self._pad_width = None
+        self._pad_height = None
+        self._pad = None
+        self._update_pad()
         # window just to draw border, no need to ever refresh it
         self._window = curses.newwin(height, width, y, x)
         self._window.border()
         self._window.refresh()
+        self._pad_region = (y + 1, x + 1, y + height - 2, x + width - 2)
         self.refresh()
 
     def getch(self):
@@ -176,20 +180,28 @@ class TextView(object):
 
     def data_changed(self):
         self._lines = self._model.get_view_data(self)
+        self._update_pad()
+        self.refresh()
+
+    def _update_pad(self):
+        self._pad_height = max(1, len(self._lines))
         self._pad_width = 0
         if self._lines:
             self._pad_width = max(len(l) for l in self._lines)
         self._pad_width = max(1, self._pad_width)
-        self.refresh()
+        self._pad = curses.newpad(self._pad_height, self._pad_width)
+        for i, l in enumerate(self._lines):
+            self._pad.addnstr(i, 0, l, self._pad_width)
+        self._cursor_row = 0
+        self._cursor_col = 0
+        self._current_row = 0
+        self._current_col = 0
 
     def refresh(self):
-        if self._lines:
-            self._pad = curses.newpad(len(self._lines), self._pad_width)
-            for i, l in enumerate(self._lines):
-                self._pad.addnstr(i, 0, l, self._pad_width)
         if self._has_focus:
-            self._pad.move(*self._cursor_position)
-        self._pad.refresh(*self._pad_position, *self._pad_region)
+            self._pad.move(self._cursor_row, self._cursor_col)
+        self._pad.refresh(self._current_row, self._current_col,
+                          *self._pad_region)
 
     def process_key(self, key):
         pass
