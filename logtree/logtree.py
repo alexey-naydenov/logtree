@@ -2,9 +2,10 @@
 
 from __future__ import print_function
 
-import re
-import argparse
 import sys
+import argparse
+import re
+import itertools
 import curses
 import curses.panel
 
@@ -99,6 +100,40 @@ class LogTreeNode:
                                               self._depth + 1, key_depth + 1))
 
 
+class TextView:
+    """Display large text with scrolling."""
+
+    def __init__(self, model, y, x, height, width):
+        self._model = model
+        self._height = height
+        self._width = width
+        self._window = curses.newwin(self._height, self._width, y, x)
+        self._window.border()
+        self._window.refresh()
+
+    def getch(self):
+        """Getch refreshes the window so it cannot be called with stdscr.
+
+        The work around is to call getch() for an active window.
+        """
+        return self._window.getch()
+
+    def set_focus(self):
+        #self._window.addstr(0, 0, 'has focus')
+        self._window.move(1, 1)
+        self.refresh()
+
+    def loose_focus(self):
+        #self._window.addstr(0, 0, 'no focus')
+        self.refresh()
+
+    def refresh(self):
+        self._window.refresh()
+
+    def process_key(self, key):
+        pass
+
+
 def is_cruft(string):
     """Check if a string should not be used to create a tree node.
 
@@ -140,24 +175,32 @@ def show_log(tree_object):
     print('\n'.join(tree_object.log))
 
 
-def make_windows(parent):
+def create_windows(parent, data):
     """Return tuple of tree and log windows."""
     ysize, xsize = parent.getmaxyx()
-    tree_width = int(xsize*0.3)
-    tree_window = curses.newwin(ysize, tree_width, 0, 0)
-    log_window = curses.newwin(ysize, xsize - tree_width, 0, tree_width)
-    tree_window.border()
-    log_window.border()
-    return tree_window, log_window
+    tree_width = int(xsize * 0.3)
+    tree_window = TextView(data, 0, 0, ysize, tree_width)
+    log_window = TextView(data, 0, tree_width, ysize, xsize - tree_width)
+    return [tree_window, log_window]
 
 
 def display_tree(stdscr, tree_object):
     """Use curses to view log file."""
-    tree_window, log_window = make_windows(stdscr)
-    tree_window.refresh()
-    log_window.refresh()
-    import time
-    time.sleep(5)
+    windows = itertools.cycle(create_windows(stdscr, tree_object))
+    active_window = next(windows)
+    active_window.set_focus()
+    while True:
+        key = active_window.getch()
+        if key == ord('\t'):
+            active_window.loose_focus()
+            active_window = next(windows)
+            active_window.set_focus()
+        elif key == ord('q'):
+            break
+        elif key == ord('h'):
+            break
+        else:
+            active_window.process_key(key)
 
 
 def run_curses(tree_object):
