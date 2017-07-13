@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import sys
 import argparse
+import logging
 import re
 import itertools
 import curses
@@ -168,7 +169,7 @@ class LogModel(object):
 
     def _get_tree_view_data(self, row, height):
         lines = ['|+' + o.value for o in self._displayed_objects[:-1]]
-        lines.append('\-' + self._displayed_objects[-1].value)
+        lines.append('\\-' + self._displayed_objects[-1].value)
         first = min(row, len(lines))
         last = min(row + height, len(lines))
         return lines[first:last]
@@ -183,6 +184,7 @@ class TextView(object):
     """Display large text with scrolling."""
 
     def __init__(self, model, y, x, height, width):
+        self._logger = logging.getLogger(__name__)
         self._model = model
         self._has_focus = False
         # store line data for horizontal scrolling
@@ -230,8 +232,10 @@ class TextView(object):
         """Called by model."""
         self._col = 0
         self._update_data()
-        if self._row >= len(self._lines):
+        if not self._lines:
+            # too little data, can not maintain current row
             self._row = 0
+            self._update_data()
         if self._row + self._cursor_row >= len(self._lines):
             self._cursor_row = 0
         self.refresh()
@@ -416,6 +420,8 @@ def parse_args():
                         required=True, help='input file')
     parser.add_argument('-p', '--path', type=str,
                         help='display starting with path')
+    parser.add_argument('-l', '--log', type=argparse.FileType('w'),
+                        help='output for log messages')
 
     return parser.parse_args()
 
@@ -436,6 +442,10 @@ def main():
         # this program is used as a filter.
         tree = build_tree(l.strip('\n\r')
                           for l in arguments.input.readlines())
+    if arguments.log:
+        logger = logging.getLogger(__name__)
+        logger.addHandler(logging.StreamHandler(arguments.log))
+        logger.setLevel(logging.DEBUG)
     if arguments.path:
         tree = tree.get_subtree(arguments.path)
         if not tree:
