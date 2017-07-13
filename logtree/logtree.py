@@ -133,11 +133,11 @@ class LogModel(object):
         if self.log_view:
             self.log_view.data_changed()
 
-    def get_view_data(self, view):
+    def get_view_data(self, view, row, column, height, width):
         if view == self.tree_view:
-            return self._get_tree_view_data()
+            return self._get_tree_view_data(row, column, height, width)
         elif view == self.log_view:
-            return self._get_log_view_data()
+            return self._get_log_view_data(row, column, height, width)
         else:
             assert False, 'Unknown view'
 
@@ -166,13 +166,15 @@ class LogModel(object):
         for c in self._log_tree.children:
             self._displayed_objects.append(c)
 
-    def _get_tree_view_data(self):
+    def _get_tree_view_data(self, row, column, height, width):
         lines = ['|+' + o.value for o in self._displayed_objects[:-1]]
         lines.append('\-' + self._displayed_objects[-1].value)
         return lines
 
-    def _get_log_view_data(self):
-        return self._current_node.log
+    def _get_log_view_data(self, row, column, height, width):
+        first = min(row, len(self._current_node.log))
+        last = min(row + height, len(self._current_node.log))
+        return self._current_node.log[first:last]
 
 
 class TextView(object):
@@ -231,7 +233,9 @@ class TextView(object):
         self.refresh()
 
     def data_changed(self):
-        self._lines = self._model.get_view_data(self)
+        self._lines = self._model.get_view_data(
+            self, self._current_row, self._current_col,
+            self._pad_height, self._pad_width)
         self._update_pad()
         self.refresh()
 
