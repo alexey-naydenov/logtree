@@ -114,11 +114,13 @@ class LogModel(object):
     """
 
     def __init__(self):
+        self._logger = logging.getLogger(__name__)
         self._log_tree = None
         self._current_node = None
         self.tree_view = None
         self.log_view = None
         self._displayed_objects = None
+        self._tree_view_data = []
 
     @property
     def data(self):
@@ -154,25 +156,50 @@ class LogModel(object):
 
     def activated(self, view, row):
         """Change tree view on enter key."""
-        assert view
         if view != self.tree_view:
             return
         if row >= len(self._displayed_objects):
             return
-        if self._displayed_objects[row].children:
-            return
+        if row == len(self._displayed_objects) - 1 \
+           or self._displayed_objects[row].depth >= \
+           self._displayed_objects[row + 1].depth:
+            self._insert_children(row)
+        else:
+            self._remove_children(row)
+        self._update_tree_view_data()
+        self.tree_view.on_data_changed()
+
+    def _insert_children(self, row):
+        for i, child in enumerate(self._displayed_objects[row].children):
+            self._displayed_objects.insert(row + 1 + i, child)
+
+    def _remove_children(self, row):
+        parent_depth = self._displayed_objects[row].depth
+        row += 1
+        new_objects = self._displayed_objects[:row]
+        while row < len(self._displayed_objects) \
+              and self._displayed_objects[row].depth > parent_depth:
+            row += 1
+        new_objects += self._displayed_objects[row:]
+        self._displayed_objects = new_objects
 
     def _init_tree_view_data(self):
         self._displayed_objects = [self._log_tree]
-        for c in self._log_tree.children:
-            self._displayed_objects.append(c)
+        self._displayed_objects.extend(self._log_tree.children)
+        self._update_tree_view_data()
+
+    def _update_tree_view_data(self):
+        data = []
+        for obj in  self._displayed_objects:
+            prefix = ' +' if obj.children else ' -'
+            line = obj.depth * '  ' + prefix + obj.value
+            data.append(line)
+        self._tree_view_data = data
 
     def _get_tree_view_data(self, row, height):
-        lines = ['|+' + o.value for o in self._displayed_objects[:-1]]
-        lines.append('\\-' + self._displayed_objects[-1].value)
-        first = min(row, len(lines))
-        last = min(row + height, len(lines))
-        return lines[first:last]
+        first = min(row, len(self._tree_view_data))
+        last = min(row + height, len(self._tree_view_data))
+        return self._tree_view_data[first:last]
 
     def _get_log_view_data(self, row, height):
         first = min(row, len(self._current_node.log))
@@ -209,7 +236,8 @@ class TextView(object):
             curses.KEY_NPAGE: self._on_key_pgdown,
             curses.KEY_LEFT: self._on_key_left,
             curses.KEY_RIGHT: self._on_key_right,
-            curses.KEY_ENTER: self._on_key_enter,
+            ord('\n'): self._on_key_enter,
+            ord('\r'): self._on_key_enter,
         }
         self.refresh()
 
@@ -218,7 +246,8 @@ class TextView(object):
 
         The work around is to call getch() for an active window.
         """
-        return self._window.getch()
+        c = self._window.getch()
+        return c
 
     def set_focus(self):
         self._has_focus = True
@@ -291,7 +320,7 @@ class TextView(object):
         self.refresh()
 
     def _on_key_enter(self):
-        self._model.activated(self, self._cursor_row)
+        self._model.activated(self, self._row + self._cursor_row)
 
     def _move_cursor_up(self, value):
         assert value >= 0
