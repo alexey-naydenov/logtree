@@ -189,10 +189,10 @@ class TextView(object):
         self._lines = []
         # position inside viewable window
         self._cursor_row = 0
-        self._cursor_col = 0
         # top left view corner
         self._row = 0
         self._col = 0
+        self._max_col = 0
         # viewable size, 2 chars for border
         self._height = height - 2
         self._width = width - 2
@@ -228,22 +228,25 @@ class TextView(object):
 
     def on_data_changed(self):
         """Called by model."""
-        self._cursor_row = 0
-        self._cursor_col = 0
-        self._row = 0
         self._col = 0
         self._update_data()
+        if self._row >= len(self._lines):
+            self._row = 0
+        if self._row + self._cursor_row >= len(self._lines):
+            self._cursor_row = 0
         self.refresh()
 
     def _update_data(self):
         """Request current data from model."""
         self._lines = self._model.get_view_data(self, self._row, self._height)
         assert len(self._lines) <= self._height
+        max_line_len = max(len(l) for l in self._lines) if self._lines else 0
+        self._max_col = max(0, max_line_len - self._width)
 
     def _update_cursor(self):
         """Used by _move_cursor*() without whole window refresh."""
         if self._has_focus:
-            self._window.move(self._cursor_row + 1, self._cursor_col + 1)
+            self._window.move(self._cursor_row + 1, 1)
 
     def refresh(self):
         self._window.erase()
@@ -272,20 +275,19 @@ class TextView(object):
         self._move_cursor_down(self._height - 1)
 
     def _on_key_left(self):
-        # self._cursor_col -= 5
-        # self._cursor_col = max(self._cursor_col, 0)
-        # self._current_col = self._cursor_col
-        pass
+        self._col -= 5
+        if self._col < 0:
+            self._col = 0
+        self.refresh()
 
     def _on_key_right(self):
-        # self._cursor_col += 5
-        # self._cursor_col = min(self._cursor_col,
-        #                        self._pad_width - self._view_width)
-        # self._current_col = self._cursor_col
-        pass
+        self._col += 5
+        if self._col >= self._max_col:
+            self._col = self._max_col
+        self.refresh()
 
     def _on_key_enter(self):
-        self._model.activated(self, self._cursor_row, self._cursor_col)
+        self._model.activated(self, self._cursor_row)
 
     def _move_cursor_up(self, value):
         assert value >= 0
