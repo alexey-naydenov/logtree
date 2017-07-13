@@ -129,19 +129,19 @@ class LogModel(object):
         self._current_node = self._log_tree
         self._init_tree_view_data()
         if self.tree_view:
-            self.tree_view.data_changed()
+            self.tree_view.on_data_changed()
         if self.log_view:
-            self.log_view.data_changed()
+            self.log_view.on_data_changed()
 
-    def get_view_data(self, view, row, column, height, width):
+    def get_view_data(self, view, row, height):
         if view == self.tree_view:
-            return self._get_tree_view_data(row, column, height, width)
+            return self._get_tree_view_data(row, height)
         elif view == self.log_view:
-            return self._get_log_view_data(row, column, height, width)
+            return self._get_log_view_data(row, height)
         else:
             assert False, 'Unknown view'
 
-    def selected(self, view, row, column):
+    def selected(self, view, row):
         """Process cursor moving in tree view."""
         assert view
         if not self.log_view or view != self.tree_view:
@@ -149,9 +149,9 @@ class LogModel(object):
         if row >= len(self._displayed_objects):
             return
         self._current_node = self._displayed_objects[row]
-        self.log_view.data_changed()
+        self.log_view.on_data_changed()
 
-    def activated(self, view, row, column):
+    def activated(self, view, row):
         """Change tree view on enter key."""
         assert view
         if view != self.tree_view:
@@ -166,12 +166,14 @@ class LogModel(object):
         for c in self._log_tree.children:
             self._displayed_objects.append(c)
 
-    def _get_tree_view_data(self, row, column, height, width):
+    def _get_tree_view_data(self, row, height):
         lines = ['|+' + o.value for o in self._displayed_objects[:-1]]
         lines.append('\-' + self._displayed_objects[-1].value)
-        return lines
+        first = min(row, len(lines))
+        last = min(row + height, len(lines))
+        return lines[first:last]
 
-    def _get_log_view_data(self, row, column, height, width):
+    def _get_log_view_data(self, row, height):
         first = min(row, len(self._current_node.log))
         last = min(row + height, len(self._current_node.log))
         return self._current_node.log[first:last]
@@ -182,29 +184,21 @@ class TextView(object):
 
     def __init__(self, model, y, x, height, width):
         self._model = model
-        self._lines = []
         self._has_focus = False
-        # cursor move vertically as usual
-        # 0 <= _cursor_row < _pad_height
-        # _current_row <= _cursor_row < _current_row + _view_height
-        # cursor stays at the left edge of the screen
-        # 0 <= _cursor_col <= _pad_width -_view_width
-        # _current_col == _cursor_col
-        self._cursor_row = None
-        self._cursor_col = None
-        self._current_row = None
-        self._current_col = None
-        self._pad_width = None
-        self._pad_height = None
-        self._view_height = height - 2
-        self._view_width = width - 2
-        self._pad = None
-        self._update_pad()
-        # window just to draw border, no need to ever refresh it
+        # store line data for horizontal scrolling
+        self._lines = []
+        # position inside viewable window
+        self._cursor_row = 0
+        self._cursor_col = 0
+        # top left view corner
+        self._row = 0
+        self._col = 0
+        # viewable size, 2 chars for border
+        self._height = height - 2
+        self._width = width - 2
+        # display window
         self._window = curses.newwin(height, width, y, x)
-        self._window.border()
-        self._window.refresh()
-        self._pad_region = (y + 1, x + 1, y + height - 2, x + width - 2)
+        self._window.keypad(1)
         # input handlers
         self._key_functions = {
             curses.KEY_UP: self._on_key_up,
@@ -222,7 +216,7 @@ class TextView(object):
 
         The work around is to call getch() for an active window.
         """
-        return self._pad.getch()
+        return self._window.getch()
 
     def set_focus(self):
         self._has_focus = True
@@ -232,92 +226,97 @@ class TextView(object):
         self._has_focus = False
         self.refresh()
 
-    def data_changed(self):
-        self._lines = self._model.get_view_data(
-            self, self._current_row, self._current_col,
-            self._pad_height, self._pad_width)
-        self._update_pad()
-        self.refresh()
-
-    def _update_pad(self):
-        self._pad_height = max(self._view_height, len(self._lines))
-        self._pad_width = 0
-        if self._lines:
-            self._pad_width = max(len(l) for l in self._lines)
-            self._pad_width += 1
-        self._pad_width = max(self._view_width, self._pad_width)
-        self._pad = curses.newpad(self._pad_height, self._pad_width)
-        self._pad.keypad(1)
-        for i, l in enumerate(self._lines):
-            self._pad.addnstr(i, 0, l, self._pad_width)
+    def on_data_changed(self):
+        """Called by model."""
         self._cursor_row = 0
         self._cursor_col = 0
-        self._current_row = 0
-        self._current_col = 0
+        self._row = 0
+        self._col = 0
+        self._update_data()
+        self.refresh()
+
+    def _update_data(self):
+        """Request current data from model."""
+        self._lines = self._model.get_view_data(self, self._row, self._height)
+        assert len(self._lines) <= self._height
+
+    def _update_cursor(self):
+        """Used by _move_cursor*() without whole window refresh."""
+        if self._has_focus:
+            self._window.move(self._cursor_row + 1, self._cursor_col + 1)
 
     def refresh(self):
-        if self._has_focus:
-            self._pad.move(self._cursor_row, self._cursor_col)
-        self._pad.refresh(self._current_row, self._current_col,
-                          *self._pad_region)
+        self._window.erase()
+        for row, text in enumerate(self._lines):
+            first = min(self._col, len(text))
+            self._window.addnstr(row + 1, 1, text[first:], self._width)
+        self._window.border()
+        self._update_cursor()
+        self._window.refresh()
 
     def process_key(self, key):
         if key not in self._key_functions.keys():
             return
-        if self._key_functions[key]():
-            self.refresh()
+        self._key_functions[key]()
 
     def _on_key_up(self):
         self._move_cursor_up(1)
-        self._model.selected(self, self._cursor_row, self._cursor_col)
-        return True
 
     def _on_key_down(self):
         self._move_cursor_down(1)
-        self._model.selected(self, self._cursor_row, self._cursor_col)
-        return True
 
     def _on_key_pgup(self):
-        self._move_cursor_up(self._view_height - 1)
-        self._model.selected(self, self._cursor_row, self._cursor_col)
-        return True
+        self._move_cursor_up(self._height - 1)
 
     def _on_key_pgdown(self):
-        self._move_cursor_down(self._view_height - 1)
-        self._model.selected(self, self._cursor_row, self._cursor_col)
-        return True
+        self._move_cursor_down(self._height - 1)
 
     def _on_key_left(self):
-        self._cursor_col -= 5
-        self._cursor_col = max(self._cursor_col, 0)
-        self._current_col = self._cursor_col
-        return True
+        # self._cursor_col -= 5
+        # self._cursor_col = max(self._cursor_col, 0)
+        # self._current_col = self._cursor_col
+        pass
 
     def _on_key_right(self):
-        self._cursor_col += 5
-        self._cursor_col = min(self._cursor_col,
-                               self._pad_width - self._view_width)
-        self._current_col = self._cursor_col
-        return True
+        # self._cursor_col += 5
+        # self._cursor_col = min(self._cursor_col,
+        #                        self._pad_width - self._view_width)
+        # self._current_col = self._cursor_col
+        pass
 
     def _on_key_enter(self):
         self._model.activated(self, self._cursor_row, self._cursor_col)
-        return False
 
     def _move_cursor_up(self, value):
         assert value >= 0
+        old_data_row = self._row + self._cursor_row
         self._cursor_row -= value
-        self._cursor_row = max(self._cursor_row, 0)
-        # ensure: current_row <= cursor_row
-        self._current_row = min(self._current_row, self._cursor_row)
+        if self._cursor_row < 0:
+            self._row = max(0, self._row + self._cursor_row)
+            self._cursor_row = 0
+            self._update_data()
+            self.refresh()
+        else:
+            self._update_cursor()
+        new_data_row = self._row + self._cursor_row
+        if new_data_row != old_data_row:
+            self._model.selected(self, new_data_row)
 
     def _move_cursor_down(self, value):
         assert value >= 0
+        old_data_row = self._row + self._cursor_row
         self._cursor_row += value
-        self._cursor_row = min(self._cursor_row, self._pad_height - 1)
-        # ensure: current_row + view_height > cursor_row
-        self._current_row = max(self._current_row,
-                                self._cursor_row - self._view_height + 1)
+        if self._cursor_row >= self._height:
+            if len(self._lines) == self._height:
+                self._row += self._cursor_row - self._height + 1
+            self._cursor_row = self._height - 1
+            self._update_data()
+            self.refresh()
+        else:
+            self._update_cursor()
+        new_data_row = self._row + self._cursor_row
+        if new_data_row != old_data_row:
+            self._model.selected(self, new_data_row)
 
 
 def is_cruft(string):
