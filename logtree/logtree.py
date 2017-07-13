@@ -114,15 +114,10 @@ class LogModel(object):
 
     def __init__(self):
         self._log_tree = None
+        self._current_node = None
         self.tree_view = None
         self.log_view = None
         self._displayed_objects = None
-
-    def _update_views(self):
-        if self.tree_view:
-            self.tree_view.data_changed()
-        if self.log_view:
-            self.log_view.data_changed()
 
     @property
     def data(self):
@@ -131,8 +126,12 @@ class LogModel(object):
     @data.setter
     def data(self, value):
         self._log_tree = value
+        self._current_node = self._log_tree
         self._init_tree_view_data()
-        self._update_views()
+        if self.tree_view:
+            self.tree_view.data_changed()
+        if self.log_view:
+            self.log_view.data_changed()
 
     def get_view_data(self, view):
         if view == self.tree_view:
@@ -142,8 +141,28 @@ class LogModel(object):
         else:
             assert False, 'Unknown view'
 
+    def selected(self, view, row, column):
+        """Process cursor moving in tree view."""
+        assert view
+        if not self.log_view or view != self.tree_view:
+            return
+        if row >= len(self._displayed_objects):
+            return
+        self._current_node = self._displayed_objects[row]
+        self.log_view.data_changed()
+
+    def activated(self, view, row, column):
+        """Change tree view on enter key."""
+        assert view
+        if view != self.tree_view:
+            return
+        if row >= len(self._displayed_objects):
+            return
+        if self._displayed_objects[row].children:
+            return
+
     def _init_tree_view_data(self):
-        self._displayed_objects = []
+        self._displayed_objects = [self._log_tree]
         for c in self._log_tree.children:
             self._displayed_objects.append(c)
 
@@ -153,7 +172,7 @@ class LogModel(object):
         return lines
 
     def _get_log_view_data(self):
-        return self.data.log
+        return self._current_node.log
 
 
 class TextView(object):
@@ -192,6 +211,7 @@ class TextView(object):
             curses.KEY_NPAGE: self._on_key_pgdown,
             curses.KEY_LEFT: self._on_key_left,
             curses.KEY_RIGHT: self._on_key_right,
+            curses.KEY_ENTER: self._on_key_enter,
         }
         self.refresh()
 
@@ -240,31 +260,45 @@ class TextView(object):
     def process_key(self, key):
         if key not in self._key_functions.keys():
             return
-        self._key_functions[key]()
-        self.refresh()
+        if self._key_functions[key]():
+            self.refresh()
 
     def _on_key_up(self):
         self._move_cursor_up(1)
+        self._model.selected(self, self._cursor_row, self._cursor_col)
+        return True
 
     def _on_key_down(self):
         self._move_cursor_down(1)
+        self._model.selected(self, self._cursor_row, self._cursor_col)
+        return True
 
     def _on_key_pgup(self):
         self._move_cursor_up(self._view_height - 1)
+        self._model.selected(self, self._cursor_row, self._cursor_col)
+        return True
 
     def _on_key_pgdown(self):
         self._move_cursor_down(self._view_height - 1)
+        self._model.selected(self, self._cursor_row, self._cursor_col)
+        return True
 
     def _on_key_left(self):
-        self._cursor_col -= 1
+        self._cursor_col -= 5
         self._cursor_col = max(self._cursor_col, 0)
         self._current_col = self._cursor_col
+        return True
 
     def _on_key_right(self):
-        self._cursor_col += 1
+        self._cursor_col += 5
         self._cursor_col = min(self._cursor_col,
                                self._pad_width - self._view_width)
         self._current_col = self._cursor_col
+        return True
+
+    def _on_key_enter(self):
+        self._model.activated(self, self._cursor_row, self._cursor_col)
+        return False
 
     def _move_cursor_up(self, value):
         assert value >= 0
