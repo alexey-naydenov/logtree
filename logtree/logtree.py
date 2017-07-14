@@ -15,19 +15,31 @@ __VERSION__ = '0.1'
 INDENT = '    '
 
 MAX_LAYERS_COUNT = 10
+# Create new node only if it has some not too few log line. Prevent
+# creation of many small nodes.
+MIN_LINES_COUNT = 5
+# Dont create too many subnodes. Tree becomes difficult to navigate
+# otherwise. Small children are eliminated first.
 MAX_CHILDREN_COUNT = 50
 MAX_VALUE_LENGTH = 80
 
 KEYWORD_SEPARATOR_RE = re.compile(r'\s')
-CRUFT_RES = [re.compile(r'\d{1,2}-\w{3}-\d{2,4}'),
-             re.compile(r'\d{1,4}-\d{1,2}-\d{1,4}'),
-             re.compile(r'\d{2}:\d{2}:\d{2}')]
+CRUFT_RES = [re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'), # ip
+             re.compile(r'\d{4}/\d{2}/\d{2}'), # date
+             re.compile(r'\d{1,2}-\w{3}-\d{2,4}'), # date
+             re.compile(r'\d{1,4}-\d{1,2}-\d{1,4}'), # date
+             re.compile(r'\d{2}:\d{2}:\d{2}'), # time
+             re.compile(r'\d{1,2}m'), # time
+             re.compile(r'\d{1,2}s'), # time
+             re.compile(r'\d{1,2}\.\d{1,2}s'), # time
+            ]
 
 
 class LogTreeNode(object):
     """Store log lines in a tree structure."""
 
     def __init__(self, lines_data, value=None, depth=0, key_depth=0):
+        self._logger = logging.getLogger(__name__)
         self._depth = depth
         self._value = value if value else ''
         self._lines = [l for _, l in lines_data]
@@ -83,12 +95,21 @@ class LogTreeNode(object):
 
     def _build_children(self, key_depth, lines_data):
         """Create children if therea are not too many or too few."""
-
-        keywords = set(k[key_depth] for k, _ in lines_data if len(k) > key_depth)
-        if len(keywords) >= MAX_CHILDREN_COUNT:
-            return
-        # don't create child objects that hold identical log lines
-        if len(keywords) == 1 and all(len(k) > key_depth for k, _ in lines_data):
+        keywords = {}
+        has_final_lines = False
+        for keys, line in lines_data:
+            assert len(keys) >= key_depth
+            if len(keys) == key_depth:
+                has_final_lines = True
+                continue
+            key = keys[key_depth]
+            if key in keywords:
+                keywords[key].append((keys, line))
+            else:
+                keywords[key] = [(keys, line)]
+        # don't create child objects that hold identical log lines,
+        # don't merge if some lines
+        if len(keywords) == 1 and not has_final_lines:
             if self._value:
                 self._value += ' ' + ''.join(keywords)
             else:
@@ -98,12 +119,15 @@ class LogTreeNode(object):
             else:
                 self._build_children(key_depth + 1, lines_data)
             return
-        for keyword in keywords:
-            child_lines = [(k, l) for (k, l) in lines_data
-                           if len(k) > key_depth and k[key_depth] == keyword]
-            if not child_lines:
-                continue
-            self._children.append(LogTreeNode(child_lines, keyword,
+        large_enough_children = False
+        min_child_line_count = MIN_LINES_COUNT
+        while not large_enough_children:
+            keywords = {k:v for k, v in keywords.items()
+                        if len(v) >= min_child_line_count}
+            large_enough_children = len(keywords) <= MAX_CHILDREN_COUNT
+            min_child_line_count *= 2
+        for keyword, lines in keywords.items():
+            self._children.append(LogTreeNode(lines, keyword,
                                               self._depth + 1, key_depth + 1))
 
 
@@ -458,6 +482,10 @@ def parse_args():
 def main():
     """Execute specified command."""
     arguments = parse_args()
+    if arguments.log:
+        logger = logging.getLogger(__name__)
+        logger.addHandler(logging.StreamHandler(arguments.log))
+        logger.setLevel(logging.DEBUG)
     if arguments.command == 'curses':
         # Need to expand tabs because curses pad can not handle
         # strings with multiple tabs. Pad has fixed width and it is
@@ -471,10 +499,6 @@ def main():
         # this program is used as a filter.
         tree = build_tree(l.strip('\n\r')
                           for l in arguments.input.readlines())
-    if arguments.log:
-        logger = logging.getLogger(__name__)
-        logger.addHandler(logging.StreamHandler(arguments.log))
-        logger.setLevel(logging.DEBUG)
     if arguments.path:
         tree = tree.get_subtree(arguments.path)
         if not tree:
