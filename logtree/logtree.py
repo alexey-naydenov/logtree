@@ -2,6 +2,11 @@
 
 from __future__ import print_function
 
+try:
+    from urllib.request import urlopen
+except ImportError:
+    from urllib2 import urlopen
+
 import sys
 import argparse
 import logging
@@ -470,10 +475,12 @@ def parse_args():
                         default='curses',
                         help='command to execute [default: curses]')
     parser.add_argument('-i', '--input', type=argparse.FileType('r'),
-                        required=True, help='input file')
+                        required=False, help='input file')
+    parser.add_argument('-l', '--link', type=str,
+                        required=False, help='link to input file')
     parser.add_argument('-p', '--path', type=str,
                         help='display starting with path')
-    parser.add_argument('-l', '--log', type=argparse.FileType('w'),
+    parser.add_argument('-d', '--debug', type=argparse.FileType('w'),
                         help='output for log messages')
 
     return parser.parse_args()
@@ -482,23 +489,29 @@ def parse_args():
 def main():
     """Execute specified command."""
     arguments = parse_args()
-    if arguments.log:
+    if arguments.debug:
         logger = logging.getLogger(__name__)
-        logger.addHandler(logging.StreamHandler(arguments.log))
+        logger.addHandler(logging.StreamHandler(arguments.debug))
         logger.setLevel(logging.DEBUG)
+    if not arguments.link and not arguments.input:
+        sys.exit('please specify either a file name or a link')
+    if arguments.link:
+        response = urlopen(arguments.link)
+        log_lines = (l.decode('latin-1') for l in response.readlines())
+    else:
+        log_lines = (l for l in arguments.input.readlines())
     if arguments.command == 'curses':
         # Need to expand tabs because curses pad can not handle
         # strings with multiple tabs. Pad has fixed width and it is
         # expensive to calculate line widths taking tabs into
         # account. If a line is too long it wraps thus end is lost. If
         # the last line is too long then pad throws an exception.
-        tree = build_tree(l.strip('\n\r').expandtabs()
-                          for l in arguments.input.readlines())
+        log_lines = (l.strip('\n\r').expandtabs() for l in log_lines)
     else:
         # Don't expand tabs to preserve original formating in case
         # this program is used as a filter.
-        tree = build_tree(l.strip('\n\r')
-                          for l in arguments.input.readlines())
+        log_lines = (l.strip('\n\r') for l in log_lines)
+    tree = build_tree(log_lines)
     if arguments.path:
         tree = tree.get_subtree(arguments.path)
         if not tree:
