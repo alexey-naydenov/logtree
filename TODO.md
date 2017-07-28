@@ -1,0 +1,11 @@
+Things to do:
+- add config file support
+- add items that are not in children into separate subnode
+- add ability to change constants and parameters through config file
+- add http support
+- add word wrapp
+- add help display
+- make windows resizable
+- marker for file position
+- jump to location using number keys (percentage)
+- search in file
