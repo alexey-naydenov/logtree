@@ -25,7 +25,7 @@ MAX_LAYERS_COUNT = 10
 MIN_LINES_COUNT = 5
 # Dont create too many subnodes. Tree becomes difficult to navigate
 # otherwise. Small children are eliminated first.
-MAX_CHILDREN_COUNT = 50
+MAX_CHILDREN_COUNT = 200
 MAX_VALUE_LENGTH = 80
 
 KEYWORD_SEPARATOR_RE = re.compile(r'\s')
@@ -54,7 +54,7 @@ class LogTreeNode(object):
             return
         if depth < MAX_LAYERS_COUNT:
             self._build_children(key_depth, lines_data)
-            self._children.sort(key=lambda c : c.value)
+            self._children.sort(key=lambda c: c.value)
 
     def __str__(self):
         value = self._depth * INDENT + self._value
@@ -81,6 +81,11 @@ class LogTreeNode(object):
     def log(self):
         """Get log lines associated with the node"""
         return self._lines
+
+    @property
+    def log_length(self):
+        """Get log length"""
+        return len(self._lines)
 
     def get_subtree(self, path):
         """Return tree object with given path."""
@@ -173,6 +178,14 @@ class LogModel(object):
         else:
             assert False, 'Unknown view'
 
+    def get_row_count(self, view):
+        if view == self.tree_view:
+            return self._get_tree_view_row_count()
+        elif view == self.log_view:
+            return self._get_log_view_row_count()
+        else:
+            assert False, 'Unknown view'
+
     def selected(self, view, row):
         """Process cursor moving in tree view."""
         assert view
@@ -234,6 +247,12 @@ class LogModel(object):
         first = min(row, len(self._current_node.log))
         last = min(row + height, len(self._current_node.log))
         return self._current_node.log[first:last]
+
+    def _get_tree_view_row_count(self):
+        return len(self._tree_view_data)
+
+    def _get_log_view_row_count(self):
+        return self._current_node.log_length
 
 
 class TextView(object):
@@ -305,8 +324,7 @@ class TextView(object):
         max_line_len = max(len(l) for l in self._lines) if self._lines else 0
         self._max_col = max(0, max_line_len - self._width)
 
-    def _update_cursor(self):
-        """Used by _move_cursor*() without whole window refresh."""
+    def update_cursor(self):
         if self._has_focus:
             self._window.move(self._cursor_row + 1, 1)
 
@@ -316,7 +334,7 @@ class TextView(object):
             first = min(self._col, len(text))
             self._window.addnstr(row + 1, 1, text[first:], self._width)
         self._window.border()
-        self._update_cursor()
+        self.update_cursor()
         self._window.refresh()
 
     def process_key(self, key):
@@ -361,26 +379,28 @@ class TextView(object):
             self._update_data()
             self.refresh()
         else:
-            self._update_cursor()
+            self.update_cursor()
         new_data_row = self._row + self._cursor_row
         if new_data_row != old_data_row:
             self._model.selected(self, new_data_row)
 
     def _move_cursor_down(self, value):
         assert value >= 0
-        old_data_row = self._row + self._cursor_row
-        self._cursor_row += value
-        if self._cursor_row >= self._height:
-            if len(self._lines) == self._height:
-                self._row += self._cursor_row - self._height + 1
-            self._cursor_row = self._height - 1
+        # to implement correct behaviour the algorithm minimises
+        # self._row change
+        old_selected_row = self._row + self._cursor_row
+        new_selected_row = min(old_selected_row + value,
+                               self._model.get_row_count(self) - 1)
+        if new_selected_row - self._row < self._height:
+            self._cursor_row = new_selected_row - self._row
+            self.update_cursor()
+        else:
+            self._row = max(0, new_selected_row - self._height + 1)
+            self._cursor_row = new_selected_row - self._row
             self._update_data()
             self.refresh()
-        else:
-            self._update_cursor()
-        new_data_row = self._row + self._cursor_row
-        if new_data_row != old_data_row:
-            self._model.selected(self, new_data_row)
+        if new_selected_row != old_selected_row:
+            self._model.selected(self, new_selected_row)
 
 
 def is_cruft(string):
@@ -439,7 +459,7 @@ def create_gui_objects(parent, tree_object):
 
 def display_tree(stdscr, tree_object):
     """Use curses to view log file."""
-    model, text_views = create_gui_objects(stdscr, tree_object)
+    _, text_views = create_gui_objects(stdscr, tree_object)
     windows = itertools.cycle(text_views)
     active_window = next(windows)
     active_window.set_focus()
@@ -455,6 +475,7 @@ def display_tree(stdscr, tree_object):
             break
         else:
             active_window.process_key(key)
+        active_window.update_cursor()
 
 
 def run_curses(tree_object):
