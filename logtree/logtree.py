@@ -270,6 +270,7 @@ class TextView(object):
         self._row = 0
         self._col = 0
         self._max_col = 0
+        self._row_count = 0
         # viewable size, 2 chars for border
         self._height = height - 2
         self._width = width - 2
@@ -308,13 +309,16 @@ class TextView(object):
     def on_data_changed(self):
         """Called by model."""
         self._col = 0
+        new_row_count = self._model.get_row_count(self)
+        if new_row_count > self._row_count:
+            lines_to_show = min(self._height, new_row_count - self._row_count)
+            lines_below_cursor = self._height - self._cursor_row - 1
+            desired_scroll_up = max(0, lines_to_show - lines_below_cursor)
+            scroll_up = min(self._cursor_row, desired_scroll_up)
+            self._row += scroll_up
+            self._cursor_row -= scroll_up
+        self._row_count = new_row_count
         self._update_data()
-        if not self._lines:
-            # too little data, can not maintain current row
-            self._row = 0
-            self._update_data()
-        if self._row + self._cursor_row >= len(self._lines):
-            self._cursor_row = 0
         self.refresh()
 
     def _update_data(self):
