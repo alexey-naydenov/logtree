@@ -7,12 +7,15 @@ try:
 except ImportError:
     from urllib2 import urlopen
 
+import os
 import sys
 import argparse
 import logging
 import re
 import itertools
 import time
+import tempfile
+import subprocess
 import curses
 import curses.panel
 
@@ -169,6 +172,10 @@ class LogModel(object):
             self.tree_view.on_data_changed()
         if self.log_view:
             self.log_view.on_data_changed()
+
+    def get_displayed_log(self):
+        """Used to display log in an external program."""
+        return self._current_node.log
 
     def get_view_data(self, view, row, height):
         if view == self.tree_view:
@@ -460,9 +467,33 @@ def create_gui_objects(parent, tree_object):
     return model, [tree_view, log_view]
 
 
+class suspend_curses():
+    """Context Manager to temporarily leave curses mode"""
+
+    def __enter__(self):
+        curses.endwin()
+
+    def __exit__(self, exc_type, exc_val, exec_tb):
+        newscr = curses.initscr()
+        newscr.refresh()
+        curses.doupdate()
+
+
+def display_in_less(model):
+    tmpfile, tmppath = tempfile.mkstemp()
+    newline = bytearray('\n', encoding='utf-8')
+    for logline in model.get_displayed_log():
+        os.write(tmpfile, bytearray(logline, encoding='utf-8'))
+        os.write(tmpfile, newline)
+    os.close(tmpfile)
+    with suspend_curses():
+        subprocess.call(['less', tmppath])
+    os.remove(tmppath)
+
+
 def display_tree(stdscr, tree_object):
     """Use curses to view log file."""
-    _, text_views = create_gui_objects(stdscr, tree_object)
+    model, text_views = create_gui_objects(stdscr, tree_object)
     windows = itertools.cycle(text_views)
     active_window = next(windows)
     active_window.set_focus()
@@ -476,6 +507,11 @@ def display_tree(stdscr, tree_object):
             break
         elif key == ord('h'):
             break
+        elif key == ord('l'):
+            display_in_less(model)
+            for view in text_views:
+                view.refresh()
+            stdscr.refresh()
         else:
             active_window.process_key(key)
         active_window.update_cursor()
