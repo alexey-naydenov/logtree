@@ -12,6 +12,7 @@ import argparse
 import logging
 import re
 import itertools
+import time
 import curses
 import curses.panel
 
@@ -29,15 +30,14 @@ MAX_CHILDREN_COUNT = 200
 MAX_VALUE_LENGTH = 80
 
 KEYWORD_SEPARATOR_RE = re.compile(r'\s')
-CRUFT_RES = [re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'), # ip
-             re.compile(r'\d{4}/\d{2}/\d{2}'), # date
-             re.compile(r'\d{1,2}-\w{3}-\d{2,4}'), # date
-             re.compile(r'\d{1,4}-\d{1,2}-\d{1,4}'), # date
-             re.compile(r'\d{2}:\d{2}:\d{2}'), # time
-             re.compile(r'\d{1,2}m'), # time
-             re.compile(r'\d{1,2}s'), # time
-             re.compile(r'\d{1,2}\.\d{1,2}s'), # time
-            ]
+CRUFT_RES = re.compile(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})' # ip
+                       r'|(\d{4}/\d{2}/\d{2})'                 # date
+                       r'|(\d{1,2}-\w{3}-\d{2,4})'             # date
+                       r'|(\d{1,4}-\d{1,2}-\d{1,4})'           # date
+                       r'|(\d{2}:\d{2}:\d{2})'                 # time
+                       r'|(\d{1,2}m)'                          # time
+                       r'|(\d{1,2}s)'                          # time
+                       r'|(\d{1,2}\.\d{1,2}s)')                # time
 
 
 class LogTreeNode(object):
@@ -414,8 +414,7 @@ def is_cruft(string):
     >>> assert is_cruft('2-dec-17')
     >>> assert is_cruft('11:22:33')
     """
-    return any(re.match(r, string) for r in CRUFT_RES)
-
+    return re.match(CRUFT_RES, string) is not None
 
 def strip_specials(string):
     """Remove spaces and brackets"""
@@ -507,6 +506,8 @@ def parse_args():
                         help='display starting with path')
     parser.add_argument('-d', '--debug', type=argparse.FileType('w'),
                         help='output for log messages')
+    parser.add_argument('--profile', action='store_true',
+                        help='run profiler on build tree code')
 
     return parser.parse_args()
 
@@ -514,12 +515,14 @@ def parse_args():
 def main():
     """Execute specified command."""
     arguments = parse_args()
+    logger = None
     if arguments.debug:
         logger = logging.getLogger(__name__)
         logger.addHandler(logging.StreamHandler(arguments.debug))
         logger.setLevel(logging.DEBUG)
     if not arguments.link and not arguments.input:
         sys.exit('please specify either a file name or a link')
+    start_ts = time.clock()
     if arguments.link:
         response = urlopen(arguments.link)
         log_lines = (l.decode('latin-1') for l in response.readlines())
@@ -536,7 +539,18 @@ def main():
         # Don't expand tabs to preserve original formating in case
         # this program is used as a filter.
         log_lines = (l.strip('\n\r') for l in log_lines)
+    log_read_ts = time.clock()
+    if arguments.profile:
+        import cProfile
+        cProfile.runctx('build_tree(log_lines)', locals={},
+                        globals={'log_lines': log_lines,
+                                 'build_tree': build_tree})
+        return
     tree = build_tree(log_lines)
+    tree_built_ts = time.clock()
+    if logger:
+        logger.info('Data read time: %s s', str(log_read_ts - start_ts))
+        logger.info('Tree build time: %s s', str(tree_built_ts - log_read_ts))
     if arguments.path:
         tree = tree.get_subtree(arguments.path)
         if not tree:
