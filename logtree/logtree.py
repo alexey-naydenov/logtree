@@ -503,7 +503,7 @@ def display_tree(stdscr, tree_object):
             active_window.loose_focus()
             active_window = next(windows)
             active_window.set_focus()
-        elif key == ord('q'):
+        elif key == ord('q') or key == 27:
             break
         elif key == ord('h'):
             break
@@ -519,6 +519,7 @@ def display_tree(stdscr, tree_object):
 
 def run_curses(tree_object):
     """Run curses wrapper that inits and destroy screen."""
+    os.environ['ESCDELAY'] = '25'
     curses.wrapper(display_tree, tree_object)
 
 
