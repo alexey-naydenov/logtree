@@ -295,7 +295,19 @@ class TextView(object):
             ord('\n'): self._on_key_enter,
             ord('\r'): self._on_key_enter,
         }
+        self._key_bindings = [
+            ('LEFT', 'left by 5 symbols'),
+            ('RIGHT', 'right by 5 symbols'),
+            ('UP', 'row up'),
+            ('DOWN', 'row down'),
+            ('PG UP', 'page up'),
+            ('PG DOWN', 'page down'),
+            ('ENTER', 'toggle object under cursor')
+        ]
         self.refresh()
+
+    def get_key_bindings(self):
+        return self._key_bindings
 
     def getch(self):
         """Getch refreshes the window so it cannot be called with stdscr.
@@ -479,6 +491,13 @@ class suspend_curses():
         curses.doupdate()
 
 
+def display_help(bindings):
+    logger = logging.getLogger(__name__)
+    help_lines = [key + '\t' + text for key, text in bindings]
+    for l in help_lines:
+        logger.info('%s', l)
+
+
 def display_in_less(model):
     tmpfile, tmppath = tempfile.mkstemp()
     newline = bytearray('\n', encoding='utf-8')
@@ -490,6 +509,13 @@ def display_in_less(model):
         subprocess.call(['less', tmppath])
     os.remove(tmppath)
 
+
+_TOP_KEY_BINDINGS = [
+    ('TAB', 'next window'),
+    ('q, ESC', 'quit'),
+    ('l', 'display current log section in less'),
+    ('h', 'display this help')
+]
 
 def display_tree(stdscr, tree_object):
     """Use curses to view log file."""
@@ -506,7 +532,7 @@ def display_tree(stdscr, tree_object):
         elif key == ord('q') or key == 27:
             break
         elif key == ord('h'):
-            break
+            display_help(_TOP_KEY_BINDINGS + text_views[0].get_key_bindings())
         elif key == ord('l'):
             display_in_less(model)
             for view in text_views:
