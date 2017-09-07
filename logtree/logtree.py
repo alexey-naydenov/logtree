@@ -426,6 +426,27 @@ class TextView(object):
             self._model.selected(self, new_selected_row)
 
 
+class StatusBar(object):
+    def __init__(self, width, y, height=1, x=0):
+        self._window = curses.newwin(height, width, y, x)
+        self._text = ''
+        self.refresh()
+
+    @property
+    def text(self):
+        return self._text
+
+    @text.setter
+    def text(self, value):
+        self._text = value
+        self.refresh()
+
+    def refresh(self):
+        self._window.erase()
+        self._window.addstr(0, 0, self._text)
+        self._window.refresh()
+
+
 def is_cruft(string):
     """Check if a string should not be used to create a tree node.
 
@@ -456,12 +477,12 @@ def build_tree(loglines):
     return LogTreeNode([(get_keywords(l), l) for l in loglines])
 
 
-def show_tree(tree_object):
+def show_tree(_, tree_object):
     """Display log information."""
     print(tree_object)
 
 
-def show_log(tree_object):
+def show_log(_, tree_object):
     """Display log information."""
     print('\n'.join(tree_object.log))
 
@@ -471,12 +492,13 @@ def create_gui_objects(parent, tree_object):
     model = LogModel()
     ysize, xsize = parent.getmaxyx()
     tree_width = int(xsize * 0.3)
-    tree_view = TextView(model, 0, 0, ysize, tree_width)
+    tree_view = TextView(model, 0, 0, ysize - 1, tree_width)
     model.tree_view = tree_view
-    log_view = TextView(model, 0, tree_width, ysize, xsize - tree_width)
+    log_view = TextView(model, 0, tree_width, ysize - 1 , xsize - tree_width)
     model.log_view = log_view
     model.data = tree_object
-    return model, [tree_view, log_view]
+    status_bar = StatusBar(xsize, ysize - 1)
+    return model, [tree_view, log_view], status_bar
 
 
 class suspend_curses():
@@ -489,13 +511,6 @@ class suspend_curses():
         newscr = curses.initscr()
         newscr.refresh()
         curses.doupdate()
-
-
-def display_help(bindings):
-    logger = logging.getLogger(__name__)
-    help_lines = [key + '\t' + text for key, text in bindings]
-    for l in help_lines:
-        logger.info('%s', l)
 
 
 def display_in_less(model):
@@ -517,22 +532,28 @@ _TOP_KEY_BINDINGS = [
     ('h', 'display this help')
 ]
 
-def display_tree(stdscr, tree_object):
+def display_tree(stdscr, source_path, tree_object):
     """Use curses to view log file."""
-    model, text_views = create_gui_objects(stdscr, tree_object)
+    model, text_views, status_bar = create_gui_objects(stdscr, tree_object)
+    status_bar.text = source_path
     windows = itertools.cycle(text_views)
     active_window = next(windows)
     active_window.set_focus()
     while True:
         key = active_window.getch()
+        if status_bar.text != source_path:
+            # reset status bar to source path after showing help
+            status_bar.text = source_path
         if key == ord('\t'):
             active_window.loose_focus()
             active_window = next(windows)
             active_window.set_focus()
         elif key == ord('q') or key == 27:
             break
-        elif key == ord('h'):
-            display_help(_TOP_KEY_BINDINGS + text_views[0].get_key_bindings())
+        elif key == ord('h') or key == curses.KEY_F1:
+            status_bar.text = ('q,ESC: quit; l: view log in less; '
+                               'TAB: switch window; ARROWS, PG *: move around; '
+                               'ENTER: open/close tree node')
         elif key == ord('l'):
             display_in_less(model)
             for view in text_views:
@@ -543,10 +564,10 @@ def display_tree(stdscr, tree_object):
         active_window.update_cursor()
 
 
-def run_curses(tree_object):
+def run_curses(source_path, tree_object):
     """Run curses wrapper that inits and destroy screen."""
     os.environ['ESCDELAY'] = '25'
-    curses.wrapper(display_tree, tree_object)
+    curses.wrapper(display_tree, source_path, tree_object)
 
 
 COMMAND_HANDLERS = {'tree': show_tree,
@@ -589,8 +610,10 @@ def main():
     if arguments.link:
         response = urlopen(arguments.link)
         log_lines = (l.decode('latin-1') for l in response.readlines())
+        source_path = 'Link: ' + arguments.link
     else:
         log_lines = (l for l in arguments.input.readlines())
+        source_path = 'File: ' + arguments.input.name
     if arguments.command == 'curses':
         # Need to expand tabs because curses pad can not handle
         # strings with multiple tabs. Pad has fixed width and it is
@@ -618,7 +641,7 @@ def main():
         tree = tree.get_subtree(arguments.path)
         if not tree:
             sys.exit('error: the specified path was not found')
-    COMMAND_HANDLERS[arguments.command](tree)
+    COMMAND_HANDLERS[arguments.command](source_path, tree)
 
 
 if __name__ == '__main__':
