@@ -304,6 +304,7 @@ class TextView(object):
             ('PG DOWN', 'page down'),
             ('ENTER', 'toggle object under cursor')
         ]
+        self._update_data()
         self.refresh()
 
     def get_key_bindings(self):
