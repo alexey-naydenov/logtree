@@ -336,6 +336,8 @@ class TextView(object):
             scroll_up = min(self._cursor_row, desired_scroll_up)
             self._row += scroll_up
             self._cursor_row -= scroll_up
+        else:
+            self._row = 0
         self._row_count = new_row_count
         self._update_data()
         self.refresh()
